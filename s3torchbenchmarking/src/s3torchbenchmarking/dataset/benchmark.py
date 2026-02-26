@@ -19,7 +19,7 @@ from s3torchbenchmarking.models import (
     ViT,
     ModelInterface,
 )
-from s3torchconnector import S3MapDataset, S3Reader, S3IterableDataset
+from s3torchconnector import S3MapDataset, S3Reader, S3IterableDataset, S3ClientConfig
 from s3torchconnector.s3reader import S3ReaderConstructor, S3ReaderConstructorProtocol
 from s3torchconnector._s3dataset_common import parse_s3_uri  # type: ignore
 
@@ -34,12 +34,14 @@ def run_experiment(config: DictConfig) -> dict:
     )
 
     endpoint = config.s3.get("endpoint")
+    force_path_style = config.s3.get("force_path_style", False)
     dataset = make_dataset(
         dataloader_config=config.dataloader,
         sharding=config.sharding,
         prefix_uri=fully_qualified_uri,
         region=config.s3.region,
         endpoint=endpoint,
+        force_path_style=force_path_style,
         load_sample=model.load_sample,
     )
     dataloader = make_dataloader(
@@ -74,6 +76,7 @@ def make_mountpoint(
     mountpoint_path: Optional[str] = None,
     additional_args: Optional[List[str]] = None,
     endpoint: Optional[str] = None,
+    force_path_style: bool = False,
 ) -> str:
     def teardown(path: str):
         subprocess.run(["sudo", "umount", path])
@@ -85,7 +88,9 @@ def make_mountpoint(
     binary = mountpoint_path or "mount-s3"
     args = additional_args or []
     if endpoint:
-        args = ["--endpoint-url", endpoint, "--force-path-style"] + args
+        args = ["--endpoint-url", endpoint] + args
+    if force_path_style:
+        args = ["--force-path-style"] + args
     subprocess.run([binary, bucket, tempdir] + args, check=True)
     atexit.register(teardown, tempdir)
 
@@ -101,6 +106,7 @@ def make_dataset(
     load_sample,
     *,
     endpoint: Optional[str] = None,
+    force_path_style: bool = False,
 ) -> Dataset:
 
     kind = dataloader_config.kind
@@ -120,6 +126,7 @@ def make_dataset(
             num_workers,
             s3reader_config,
             endpoint=endpoint,
+            force_path_style=force_path_style,
         )
     if kind == "s3mapdataset":
         if not region:
@@ -130,18 +137,22 @@ def make_dataset(
         return create_s3_map_dataset(
             sharding, prefix_uri, region, load_sample, s3reader_config,
             endpoint=endpoint,
+            force_path_style=force_path_style,
         )
     if kind == "fsspec":
         return create_fsspec_dataset(
-            sharding, prefix_uri, load_sample, num_workers, endpoint=endpoint
+            sharding, prefix_uri, load_sample, num_workers,
+            endpoint=endpoint, force_path_style=force_path_style,
         )
     if kind == "mountpoint":
         return create_mountpoint_dataset(
-            sharding, prefix_uri, load_sample, num_workers, False, endpoint=endpoint
+            sharding, prefix_uri, load_sample, num_workers, False,
+            endpoint=endpoint, force_path_style=force_path_style,
         )
     if kind == "mountpointcache":
         return create_mountpoint_dataset(
-            sharding, prefix_uri, load_sample, num_workers, True, endpoint=endpoint
+            sharding, prefix_uri, load_sample, num_workers, True,
+            endpoint=endpoint, force_path_style=force_path_style,
         )
     raise Exception(f"Unknown dataset kind {kind}")
 
@@ -174,10 +185,13 @@ def create_s3_iterable_dataset(
     num_workers: int,
     s3reader_config: DictConfig,
     endpoint: Optional[str] = None,
+    force_path_style: bool = False,
 ):
     reader_constructor = make_s3_reader_constructor(s3reader_config)
+    s3client_config = S3ClientConfig(force_path_style=force_path_style)
     dataset = S3IterableDataset.from_prefix(
         prefix_uri, region=region, endpoint=endpoint,
+        s3client_config=s3client_config,
         reader_constructor=reader_constructor,
     )
     dataset = torchdata.datapipes.iter.IterableWrapper(dataset)
@@ -198,8 +212,10 @@ def create_s3_map_dataset(
     load_sample,
     s3reader_config: DictConfig,
     endpoint: Optional[str] = None,
+    force_path_style: bool = False,
 ):
     reader_constructor = make_s3_reader_constructor(s3reader_config)
+    s3client_config = S3ClientConfig(force_path_style=force_path_style)
     if sharding:
         raise ValueError("Sharding is not supported for s3mapdataset")
     else:
@@ -207,6 +223,7 @@ def create_s3_map_dataset(
             prefix_uri,
             region=region,
             endpoint=endpoint,
+            s3client_config=s3client_config,
             transform=load_sample,
             reader_constructor=reader_constructor,
         )
@@ -215,7 +232,7 @@ def create_s3_map_dataset(
 
 def create_mountpoint_dataset(
     sharding: bool, prefix_uri: str, load_sample, num_workers: int, use_cache: bool,
-    endpoint: Optional[str] = None,
+    endpoint: Optional[str] = None, force_path_style: bool = False,
 ):
     if use_cache:
         cache_dir = tempfile.mkdtemp(dir="./nvme/", prefix="s3mp_cache_")
@@ -224,7 +241,8 @@ def create_mountpoint_dataset(
         arguments = ["--metadata-ttl", "indefinite"]
 
     prefix_uri = make_mountpoint(
-        prefix_uri=prefix_uri, additional_args=arguments, endpoint=endpoint
+        prefix_uri=prefix_uri, additional_args=arguments,
+        endpoint=endpoint, force_path_style=force_path_style,
     )
     # TODO: compare the performance of using torchdata file APIs and use the more performant option.
     return create_fsspec_dataset(sharding, prefix_uri, load_sample, num_workers)
@@ -232,11 +250,13 @@ def create_mountpoint_dataset(
 
 def create_fsspec_dataset(
     sharding: bool, prefix_uri: str, load_sample, num_workers: int,
-    endpoint: Optional[str] = None,
+    endpoint: Optional[str] = None, force_path_style: bool = False,
 ):
     fsspec_kwargs = {}
     if endpoint:
         fsspec_kwargs["client_kwargs"] = {"endpoint_url": endpoint}
+    if force_path_style:
+        fsspec_kwargs["config_kwargs"] = {"s3": {"addressing_style": "path"}}
     lister = torchdata.datapipes.iter.FSSpecFileLister(prefix_uri, **fsspec_kwargs)
     dataset = torchdata.datapipes.iter.FSSpecFileOpener(lister, mode="rb", **fsspec_kwargs)
     if num_workers > 0:
