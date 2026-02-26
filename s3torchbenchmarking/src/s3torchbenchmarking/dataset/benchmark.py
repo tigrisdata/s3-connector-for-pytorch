@@ -33,11 +33,13 @@ def run_experiment(config: DictConfig) -> dict:
         "s3://" + config.s3.bucket.strip("/") + "/" + config.dataset.strip("/")
     )
 
+    endpoint = config.s3.get("endpoint")
     dataset = make_dataset(
         dataloader_config=config.dataloader,
         sharding=config.sharding,
         prefix_uri=fully_qualified_uri,
         region=config.s3.region,
+        endpoint=endpoint,
         load_sample=model.load_sample,
     )
     dataloader = make_dataloader(
@@ -71,6 +73,7 @@ def make_mountpoint(
     prefix_uri: str,
     mountpoint_path: Optional[str] = None,
     additional_args: Optional[List[str]] = None,
+    endpoint: Optional[str] = None,
 ) -> str:
     def teardown(path: str):
         subprocess.run(["sudo", "umount", path])
@@ -81,6 +84,8 @@ def make_mountpoint(
     tempdir = tempfile.mkdtemp(prefix="s3dataset_")
     binary = mountpoint_path or "mount-s3"
     args = additional_args or []
+    if endpoint:
+        args = ["--endpoint-url", endpoint, "--force-path-style"] + args
     subprocess.run([binary, bucket, tempdir] + args, check=True)
     atexit.register(teardown, tempdir)
 
@@ -94,6 +99,8 @@ def make_dataset(
     prefix_uri: str,
     region: Optional[str],
     load_sample,
+    *,
+    endpoint: Optional[str] = None,
 ) -> Dataset:
 
     kind = dataloader_config.kind
@@ -112,6 +119,7 @@ def make_dataset(
             load_sample,
             num_workers,
             s3reader_config,
+            endpoint=endpoint,
         )
     if kind == "s3mapdataset":
         if not region:
@@ -120,17 +128,20 @@ def make_dataset(
             raise ValueError(f"Must provide s3reader config for {kind}")
         s3reader_config = dataloader_config.s3reader
         return create_s3_map_dataset(
-            sharding, prefix_uri, region, load_sample, s3reader_config
+            sharding, prefix_uri, region, load_sample, s3reader_config,
+            endpoint=endpoint,
         )
     if kind == "fsspec":
-        return create_fsspec_dataset(sharding, prefix_uri, load_sample, num_workers)
+        return create_fsspec_dataset(
+            sharding, prefix_uri, load_sample, num_workers, endpoint=endpoint
+        )
     if kind == "mountpoint":
         return create_mountpoint_dataset(
-            sharding, prefix_uri, load_sample, num_workers, False
+            sharding, prefix_uri, load_sample, num_workers, False, endpoint=endpoint
         )
     if kind == "mountpointcache":
         return create_mountpoint_dataset(
-            sharding, prefix_uri, load_sample, num_workers, True
+            sharding, prefix_uri, load_sample, num_workers, True, endpoint=endpoint
         )
     raise Exception(f"Unknown dataset kind {kind}")
 
@@ -162,10 +173,12 @@ def create_s3_iterable_dataset(
     load_sample,
     num_workers: int,
     s3reader_config: DictConfig,
+    endpoint: Optional[str] = None,
 ):
     reader_constructor = make_s3_reader_constructor(s3reader_config)
     dataset = S3IterableDataset.from_prefix(
-        prefix_uri, region=region, reader_constructor=reader_constructor
+        prefix_uri, region=region, endpoint=endpoint,
+        reader_constructor=reader_constructor,
     )
     dataset = torchdata.datapipes.iter.IterableWrapper(dataset)
 
@@ -184,6 +197,7 @@ def create_s3_map_dataset(
     region: str,
     load_sample,
     s3reader_config: DictConfig,
+    endpoint: Optional[str] = None,
 ):
     reader_constructor = make_s3_reader_constructor(s3reader_config)
     if sharding:
@@ -192,6 +206,7 @@ def create_s3_map_dataset(
         dataset = S3MapDataset.from_prefix(
             prefix_uri,
             region=region,
+            endpoint=endpoint,
             transform=load_sample,
             reader_constructor=reader_constructor,
         )
@@ -199,7 +214,8 @@ def create_s3_map_dataset(
 
 
 def create_mountpoint_dataset(
-    sharding: bool, prefix_uri: str, load_sample, num_workers: int, use_cache: bool
+    sharding: bool, prefix_uri: str, load_sample, num_workers: int, use_cache: bool,
+    endpoint: Optional[str] = None,
 ):
     if use_cache:
         cache_dir = tempfile.mkdtemp(dir="./nvme/", prefix="s3mp_cache_")
@@ -207,16 +223,22 @@ def create_mountpoint_dataset(
     else:
         arguments = ["--metadata-ttl", "indefinite"]
 
-    prefix_uri = make_mountpoint(prefix_uri=prefix_uri, additional_args=arguments)
+    prefix_uri = make_mountpoint(
+        prefix_uri=prefix_uri, additional_args=arguments, endpoint=endpoint
+    )
     # TODO: compare the performance of using torchdata file APIs and use the more performant option.
     return create_fsspec_dataset(sharding, prefix_uri, load_sample, num_workers)
 
 
 def create_fsspec_dataset(
-    sharding: bool, prefix_uri: str, load_sample, num_workers: int
+    sharding: bool, prefix_uri: str, load_sample, num_workers: int,
+    endpoint: Optional[str] = None,
 ):
-    lister = torchdata.datapipes.iter.FSSpecFileLister(prefix_uri)
-    dataset = torchdata.datapipes.iter.FSSpecFileOpener(lister, mode="rb")
+    fsspec_kwargs = {}
+    if endpoint:
+        fsspec_kwargs["client_kwargs"] = {"endpoint_url": endpoint}
+    lister = torchdata.datapipes.iter.FSSpecFileLister(prefix_uri, **fsspec_kwargs)
+    dataset = torchdata.datapipes.iter.FSSpecFileOpener(lister, mode="rb", **fsspec_kwargs)
     if num_workers > 0:
         dataset = dataset.sharding_filter()
     if sharding:
