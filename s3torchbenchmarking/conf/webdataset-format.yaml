@@ -42,7 +42,7 @@ hydra:
       +dataloader: s3iterabledataset
       # Dataset name (corresponds to the name of a folder in S3); will be used to build an S3 URI
       +dataset: datacomp_wds_64mb_shards
-      dataloader.num_workers: 8
+      dataloader.num_workers: 32
       # S3 reader sweeps (only applies to s3iterabledataset/s3mapdataset)
       # s3reader type: sequential or range_based
       dataloader.s3reader.type: sequential
