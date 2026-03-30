@@ -10,18 +10,16 @@ performance impact to the end-to-end training process.
 **Four scenarios** are available:
 
 1. **Dataset benchmarks**
-    - Compare our connector against other Dataset classes
-    - All scenarios save data to S3
-    - Measure performance in data fetching and indexing
-2. **PyTorch's Distributed Checkpointing (DCP) benchmarks**
-    - Assess our connector's performance versus PyTorch's default distributed checkpointing mechanism
-    - For detailed information, refer to [DCP using DDP `README`](src/s3torchbenchmarking/dcp_ddp/README.md)
-or [DCP using FSDP `README`](src/s3torchbenchmarking/dcp_fsdp/README.md)
+   - Compare our connector against other Dataset classes
+   - All scenarios save data to S3
+   - Measure performance in data fetching and indexing
+2. **PyTorch's Distributed Checkpointing (DCP) benchmarks** - Assess our connector's performance versus PyTorch's default distributed checkpointing mechanism - For detailed information, refer to [DCP using DDP `README`](src/s3torchbenchmarking/dcp_ddp/README.md)
+   or [DCP using FSDP `README`](src/s3torchbenchmarking/dcp_fsdp/README.md)
 3. **PyTorch Lightning Checkpointing benchmarks**
-    - Evaluate our connector within the PyTorch Lightning framework
-    - Compare against PyTorch Lightning's default checkpointing implementation
+   - Evaluate our connector within the PyTorch Lightning framework
+   - Compare against PyTorch Lightning's default checkpointing implementation
 4. **PyTorch Checkpointing benchmarks**
-    - TODO!
+   - TODO!
 
 ## Getting started
 
@@ -114,14 +112,14 @@ vim ./conf/lightning_checkpointing.yaml # 1. edit config
 # PyTorch’s Distributed Checkpointing (DCP) benchmarks
 vim ./conf/dcp_ddp_load.yaml              # 1. edit config
 vim ./conf/dcp_fsdp_load.yaml
-vim ./conf/dcp_ddp_save.yaml                   
+vim ./conf/dcp_ddp_save.yaml
 vim ./conf/dcp_fsdp_save.yaml
 # Saving Checkpoint
 ./utils/run_dcp_ddp_benchmarks.sh         # 2. run scenario for saving checkpoint
 ./utils/run_dcp_fsdp_benchmarks.sh
 # Loading Checkpoint
 ./utils/run_ddp_benchmarks.sh --load      # 3. run scenario for loading checkpoint after saving
-./utils/run_dcp_fsdp_benchmarks.sh --load 
+./utils/run_dcp_fsdp_benchmarks.sh --load
 ```
 
 > [!NOTE]
@@ -144,7 +142,7 @@ Also, as the scripts pass the inline parameters you give them to Hydra, you may 
 
 Benchmark results are organized as follows, inside a default `./multirun` directory (e.g.):
 
-```
+```text
 ./multirun
 └── dataset
     └── 2024-12-20_13-42-27
@@ -170,21 +168,17 @@ Experiments will report various metrics, such as throughput and processed time �
 Results are stored in two locations:
 
 1. In the job subdirectories:
-    - `benchmark.log`: Individual job logs (collected by Hydra)
-    - `job_results.json`: Individual job results
+   - `benchmark.log`: Individual job logs (collected by Hydra)
+   - `job_results.json`: Individual job results
 2. In the run directory:
-    - `multirun.yaml`: Global Hydra configuration for the run
-    - `run_results.json`: Comprehensive run results, including additional metadata
+   - `multirun.yaml`: Global Hydra configuration for the run
+   - `run_results.json`: Comprehensive run results, including additional metadata
 
 If a DynamoDB table is defined in the [`conf/aws/dynamodb.yaml`](conf/aws/dynamodb.yaml) configuration file, results
 will also be written to the specified table.
 
 [dlami]: https://docs.aws.amazon.com/dlami/
-
 [dlami-pytorch]: https://aws.amazon.com/releasenotes/aws-deep-learning-ami-gpu-pytorch-2-5-amazon-linux-2023/
-
 [mountpoint-s3]: https://github.com/awslabs/mountpoint-s3/tree/main
-
 [credentials]: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html
-
 [hydra-overrides]: https://hydra.cc/docs/advanced/override_grammar/basic/
