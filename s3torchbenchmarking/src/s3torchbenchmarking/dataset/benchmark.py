@@ -38,6 +38,7 @@ def run_experiment(config: DictConfig) -> dict:
     dataset = make_dataset(
         dataloader_config=config.dataloader,
         sharding=config.sharding,
+        filter_images=config.get("filter_images", False),
         prefix_uri=fully_qualified_uri,
         region=config.s3.region,
         endpoint=endpoint,
@@ -101,6 +102,7 @@ def make_mountpoint(
 def make_dataset(
     dataloader_config: DictConfig,
     sharding: bool,
+    filter_images: bool,
     prefix_uri: str,
     region: Optional[str],
     load_sample,
@@ -120,6 +122,7 @@ def make_dataset(
         s3reader_config = dataloader_config.s3reader
         return create_s3_iterable_dataset(
             sharding,
+            filter_images,
             prefix_uri,
             region,
             load_sample,
@@ -141,17 +144,17 @@ def make_dataset(
         )
     if kind == "fsspec":
         return create_fsspec_dataset(
-            sharding, prefix_uri, load_sample, num_workers,
+            sharding, filter_images, prefix_uri, load_sample, num_workers,
             endpoint=endpoint, force_path_style=force_path_style,
         )
     if kind == "mountpoint":
         return create_mountpoint_dataset(
-            sharding, prefix_uri, load_sample, num_workers, False,
+            sharding, filter_images, prefix_uri, load_sample, num_workers, False,
             endpoint=endpoint, force_path_style=force_path_style,
         )
     if kind == "mountpointcache":
         return create_mountpoint_dataset(
-            sharding, prefix_uri, load_sample, num_workers, True,
+            sharding, filter_images, prefix_uri, load_sample, num_workers, True,
             endpoint=endpoint, force_path_style=force_path_style,
         )
     raise Exception(f"Unknown dataset kind {kind}")
@@ -179,6 +182,7 @@ def make_s3_reader_constructor(
 
 def create_s3_iterable_dataset(
     sharding: bool,
+    filter_images: bool,
     prefix_uri: str,
     region: str,
     load_sample,
@@ -201,6 +205,8 @@ def create_s3_iterable_dataset(
     if sharding:
         dataset = dataset.map(tar_to_tuple)
         dataset = dataset.load_from_tar()
+        if filter_images:
+            dataset = dataset.filter(_is_image_file)
 
     return dataset.map(load_sample)
 
@@ -231,8 +237,14 @@ def create_s3_map_dataset(
 
 
 def create_mountpoint_dataset(
-    sharding: bool, prefix_uri: str, load_sample, num_workers: int, use_cache: bool,
-    endpoint: Optional[str] = None, force_path_style: bool = False,
+    sharding: bool,
+    filter_images: bool,
+    prefix_uri: str,
+    load_sample,
+    num_workers: int,
+    use_cache: bool,
+    endpoint: Optional[str] = None,
+    force_path_style: bool = False,
 ):
     if use_cache:
         cache_dir = tempfile.mkdtemp(dir="./nvme/", prefix="s3mp_cache_")
@@ -245,11 +257,14 @@ def create_mountpoint_dataset(
         endpoint=endpoint, force_path_style=force_path_style,
     )
     # TODO: compare the performance of using torchdata file APIs and use the more performant option.
-    return create_fsspec_dataset(sharding, prefix_uri, load_sample, num_workers)
+    return create_fsspec_dataset(
+        sharding, filter_images, prefix_uri, load_sample, num_workers,
+        endpoint=endpoint, force_path_style=force_path_style,
+    )
 
 
 def create_fsspec_dataset(
-    sharding: bool, prefix_uri: str, load_sample, num_workers: int,
+    sharding: bool, filter_images: bool, prefix_uri: str, load_sample, num_workers: int,
     endpoint: Optional[str] = None, force_path_style: bool = False,
 ):
     fsspec_kwargs = {}
@@ -263,6 +278,8 @@ def create_fsspec_dataset(
         dataset = dataset.sharding_filter()
     if sharding:
         dataset = dataset.load_from_tar()
+        if filter_images:
+            dataset = dataset.filter(_is_image_file)
 
     return dataset.map(load_sample)
 
@@ -276,6 +293,15 @@ def make_dataloader(dataset: Dataset, num_workers: int, batch_size: int):
         num_workers=num_workers,
         collate_fn=default_collate,
     )
+
+
+_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff")
+
+
+def _is_image_file(sample):
+    """Filter out non-image files (e.g. .cls metadata) from webdataset tar archives."""
+    key = sample[0] if isinstance(sample, tuple) else sample.key
+    return key.lower().endswith(_IMAGE_EXTENSIONS)
 
 
 # As S3TorchConnector does not implement load_from_tar method

@@ -7,16 +7,17 @@ defaults:
 # NOTE: a non-existing bucket will fail the benchmarks.
 s3:
   region: auto # e.g., eu-west-1
-  bucket: ??? # e.g., my-bucket (*not* an S3 URI)
-  endpoint: null # optional: custom S3-compatible endpoint URL
-  force_path_style: false # use path-style addressing (required for most S3-compatible services)
+  bucket: s3torch-benchmark-069 # e.g., my-bucket (*not* an S3 URI)
+  endpoint: "https://t3.storage.dev" # optional: custom S3-compatible endpoint URL
+  force_path_style: true # uncomment if using a custom S3-compatible endpoint that requires path-style access (e.g., Tigris Acceleration Gateway)
+
 # Boolean flag to tell whether the dataset is sharded or not.
 sharding: True # Tar-sharded datasets
 # When True, filter out non-image files (e.g. .cls metadata) after extracting tar shards.
 # Enable this for webdataset-format tars that contain paired .jpg/.cls files.
-filter_images: False
+filter_images: True
 # Number of iterations for training a model.
-epochs: 10
+epochs: 1 # Single-epoch benchmark
 
 checkpoint:
   # Number of training steps between checkpoints.
@@ -38,9 +39,10 @@ hydra:
       +model: vit
       # Kind of the dataloader (valid options: "fsspec", "s3iterabledataset", "mountpoint", "mountpointcache").
       # For dataloader kind specific options, see specific conf/dataloader/{dataloader-kind}.yaml
-      +dataloader: fsspec, s3iterabledataset, mountpoint, mountpointcache
+      +dataloader: s3iterabledataset
       # Dataset name (corresponds to the name of a folder in S3); will be used to build an S3 URI
-      +dataset: 100k_496x387_images
+      +dataset: datacomp_wds_64mb_shards
+      dataloader.num_workers: 8
       # S3 reader sweeps (only applies to s3iterabledataset/s3mapdataset)
       # s3reader type: sequential or range_based
       dataloader.s3reader.type: sequential
