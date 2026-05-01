@@ -180,6 +180,22 @@ def make_s3_reader_constructor(
     return reader_constructor
 
 
+def make_s3_client_config(
+    s3reader_config: DictConfig, force_path_style: bool
+) -> S3ClientConfig:
+    kwargs = {"force_path_style": force_path_style}
+    if "throughput_target_gbps" in s3reader_config:
+        kwargs["throughput_target_gbps"] = float(
+            s3reader_config.throughput_target_gbps
+        )
+    if "client_part_size" in s3reader_config:
+        size = s3reader_config.client_part_size
+        if isinstance(size, str):
+            size = int(eval(size, {"__builtins__": {}}, {}))
+        kwargs["part_size"] = int(size)
+    return S3ClientConfig(**kwargs)
+
+
 def create_s3_iterable_dataset(
     sharding: bool,
     filter_images: bool,
@@ -192,7 +208,7 @@ def create_s3_iterable_dataset(
     force_path_style: bool = False,
 ):
     reader_constructor = make_s3_reader_constructor(s3reader_config)
-    s3client_config = S3ClientConfig(force_path_style=force_path_style)
+    s3client_config = make_s3_client_config(s3reader_config, force_path_style)
     dataset = S3IterableDataset.from_prefix(
         prefix_uri, region=region, endpoint=endpoint,
         s3client_config=s3client_config,
@@ -221,7 +237,7 @@ def create_s3_map_dataset(
     force_path_style: bool = False,
 ):
     reader_constructor = make_s3_reader_constructor(s3reader_config)
-    s3client_config = S3ClientConfig(force_path_style=force_path_style)
+    s3client_config = make_s3_client_config(s3reader_config, force_path_style)
     if sharding:
         raise ValueError("Sharding is not supported for s3mapdataset")
     else:
@@ -285,7 +301,7 @@ def create_fsspec_dataset(
 
 
 def make_dataloader(dataset: Dataset, num_workers: int, batch_size: int):
-    return DataLoader(
+    kwargs = dict(
         dataset=dataset,
         batch_size=batch_size,
         shuffle=False,
@@ -293,6 +309,10 @@ def make_dataloader(dataset: Dataset, num_workers: int, batch_size: int):
         num_workers=num_workers,
         collate_fn=default_collate,
     )
+    if num_workers > 0:
+        kwargs["prefetch_factor"] = 8
+        kwargs["persistent_workers"] = True
+    return DataLoader(**kwargs)
 
 
 _IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff")
